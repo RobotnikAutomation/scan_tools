@@ -339,6 +339,9 @@ void LaserScanMatcher::initParams()
   // correspondence by 1/sigma^2
   if (!nh_private_.getParam ("use_sigma_weights", input_.use_sigma_weights))
     input_.use_sigma_weights = 0;
+
+  if (!nh_private_.getParam ("add_imu_roll_pitch", add_imu_roll_pitch_))
+    add_imu_roll_pitch_ = false;
 }
 
 void LaserScanMatcher::imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg)
@@ -507,7 +510,26 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 
     // calculate the measured pose of the scan in the fixed frame
     last_base_in_fixed_ = keyframe_base_in_fixed_ * meas_keyframe_base_offset;
+    
+    tf::Transform current_transform = last_base_in_fixed_;
 
+    if (add_imu_roll_pitch_ && use_imu_ && received_imu_)
+    {
+      tf::Quaternion imu_orientation;
+      tf::quaternionMsgToTF(latest_imu_msg_.orientation, imu_orientation);
+
+      double roll, pitch, yaw;
+      tf::Matrix3x3(imu_orientation).getRPY(roll, pitch, yaw);
+
+      tf::Quaternion current_quat = current_transform.getRotation();
+      double current_roll, current_pitch, current_yaw;
+      tf::Matrix3x3(current_quat).getRPY(current_roll, current_pitch, current_yaw);
+      
+      tf::Quaternion new_quat;
+      new_quat.setRPY(roll, pitch, current_yaw);
+
+      current_transform.setRotation(new_quat);
+    }
     // **** publish
 
     Eigen::Matrix2f xy_cov = Eigen::Matrix2f::Zero();
@@ -536,9 +558,9 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
       // unstamped Pose2D message
       geometry_msgs::Pose2D::Ptr pose_msg;
       pose_msg = boost::make_shared<geometry_msgs::Pose2D>();
-      pose_msg->x = last_base_in_fixed_.getOrigin().getX();
-      pose_msg->y = last_base_in_fixed_.getOrigin().getY();
-      pose_msg->theta = tf::getYaw(last_base_in_fixed_.getRotation());
+      pose_msg->x = current_transform.getOrigin().getX();
+      pose_msg->y = current_transform.getOrigin().getY();
+      pose_msg->theta = tf::getYaw(current_transform.getRotation());
       pose_publisher_.publish(pose_msg);
     }
     if (publish_pose_stamped_)
@@ -550,7 +572,7 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
       pose_stamped_msg->header.stamp    = time;
       pose_stamped_msg->header.frame_id = fixed_frame_;
 
-      tf::poseTFToMsg(last_base_in_fixed_, pose_stamped_msg->pose);
+      tf::poseTFToMsg(current_transform, pose_stamped_msg->pose);
 
       pose_stamped_publisher_.publish(pose_stamped_msg);
     }
@@ -559,7 +581,7 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
       // unstamped PoseWithCovariance message
       geometry_msgs::PoseWithCovariance::Ptr pose_with_covariance_msg;
       pose_with_covariance_msg = boost::make_shared<geometry_msgs::PoseWithCovariance>();
-      tf::poseTFToMsg(last_base_in_fixed_, pose_with_covariance_msg->pose);
+      tf::poseTFToMsg(current_transform, pose_with_covariance_msg->pose);
 
       pose_with_covariance_msg->covariance = boost::assign::list_of
         (xy_cov(0, 0)) (xy_cov(0, 1)) (0) (0) (0) (0)
@@ -580,7 +602,7 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
       pose_with_covariance_stamped_msg->header.stamp    = time;
       pose_with_covariance_stamped_msg->header.frame_id = fixed_frame_;
 
-      tf::poseTFToMsg(last_base_in_fixed_, pose_with_covariance_stamped_msg->pose.pose);
+      tf::poseTFToMsg(current_transform, pose_with_covariance_stamped_msg->pose.pose);
 
       pose_with_covariance_stamped_msg->pose.covariance = boost::assign::list_of
         (xy_cov(0, 0)) (xy_cov(0, 1)) (0) (0) (0) (0)
@@ -595,7 +617,7 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 
     if (publish_tf_)
     {
-      tf::StampedTransform transform_msg (last_base_in_fixed_, time, fixed_frame_, base_frame_);
+      tf::StampedTransform transform_msg (current_transform, time, fixed_frame_, base_frame_);
       tf_broadcaster_.sendTransform (transform_msg);
     }
   }
