@@ -155,6 +155,8 @@ class LaserScanMatcher
     std::vector<double> a_cos_;
     std::vector<double> a_sin_;
 
+    bool add_imu_roll_pitch_;
+
     sm_params input_;
     sm_result output_;
     LDP prev_ldp_scan_;
